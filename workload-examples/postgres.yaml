@@ -1,0 +1,83 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: in-place-pod-resizing
+---
+# A headless Service gives each pod a stable DNS name:
+#     <statefulset-name>-0.db-demo.svc.cluster.local
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: in-place-pod-resizing
+spec:
+  clusterIP: None          # headless
+  ports:
+  - name: pg
+    port: 5432
+  selector:
+    app: postgres
+---
+# A ConfigMap with the simplest postgresql.conf tweak
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pg-config
+  namespace: in-place-pod-resizing
+data:
+  POSTGRES_DB: demo               # env-style values for init
+  POSTGRES_USER: demo
+  POSTGRES_PASSWORD: demo
+---
+# The StatefulSet (1 replica = single instance)
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: in-place-pod-resizing
+spec:
+  selector:
+    matchLabels:
+      app: postgres
+  serviceName: postgres           # must match the Service above
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: db
+        image: postgres:16-alpine
+        resizePolicy:
+        - resourceName: "cpu"
+          restartPolicy: "NotRequired"
+        - resourceName: "memory"
+          restartPolicy: "RestartContainer"
+        resources:
+          requests:
+            cpu: 1
+            memory: 1Gi
+          limits:
+            cpu: 2
+            memory: 2Gi
+        ports:
+        - containerPort: 5432
+          name: pg
+        envFrom:
+        - configMapRef:
+            name: pg-config
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+          subPath: pgdata
+  volumeClaimTemplates:
+  - metadata:
+      name: data                  # must match the volumeMount
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 3Gi            # adjust size
+      storageClassName: "gp3"        # "" = default StorageClass
+
